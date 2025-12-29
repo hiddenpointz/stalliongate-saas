@@ -43,7 +43,7 @@ const StalliongateSaaS = () => {
   const generateProxyUrl = (originalUrl, customerId) => {
     const token = btoa(`${customerId}-${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').substring(0, 16);
     // TODO: Replace with your actual Vercel URL after deployment
-    return `https://stalliongate.vercel.app/api/proxy?token=${token}`;
+    return `https://stalliongate-saas.vercel.app/api/proxy?token=${token}`;
   };
 
   const generateApiKey = () => {
