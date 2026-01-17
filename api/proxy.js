@@ -1,15 +1,16 @@
 // api/proxy.js
-import fetch from "node-fetch";
 
 /**
- * 🚨 REQUIRED: Force Node runtime on Vercel
+ * ✅ FORCE NODE RUNTIME (VERY IMPORTANT)
+ * This MUST be the first executable statement in the file
  */
 export const config = {
   runtime: "nodejs",
 };
 
 /**
- * 🔐 Token database (replace with real DB in prod)
+ * 🔐 TEMP TOKEN DATABASE
+ * (In production, replace with DB or KV store)
  */
 const TOKEN_DATABASE = {
   MTc2NzAxOTk3NzE2: {
@@ -21,13 +22,13 @@ const TOKEN_DATABASE = {
 };
 
 /**
- * 🚀 Main handler
+ * 🚀 MAIN PROXY HANDLER
  */
 export default async function handler(req, res) {
   try {
     const { token } = req.query;
 
-    // ---- CORS ----
+    /* ---------- CORS ---------- */
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -40,7 +41,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Token required" });
     }
 
-    // ---- TOKEN VALIDATION ----
+    /* ---------- TOKEN VALIDATION ---------- */
     const tokenData = TOKEN_DATABASE[token];
 
     if (!tokenData) {
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
         .send(generateErrorPage("Token has expired"));
     }
 
-    // ---- SAFE HOST / PROTOCOL DETECTION ----
+    /* ---------- HOST + PROTOCOL (VERCEL SAFE) ---------- */
     const host =
       req.headers["x-forwarded-host"] ||
       req.headers.host ||
@@ -71,19 +72,17 @@ export default async function handler(req, res) {
 
     const proxyBaseUrl = `${protocol}://${host}/api/proxy?token=${token}`;
 
-    // ---- TARGET URL RESOLUTION ----
+    /* ---------- TARGET URL ---------- */
     const originalUrl = tokenData.originalUrl;
     const targetPath = req.url.split("&path=")[1] || "";
-    const targetUrl = `${originalUrl}${
-      targetPath ? "/" + decodeURIComponent(targetPath) : ""
-    }`;
+    const targetUrl =
+      originalUrl + (targetPath ? "/" + decodeURIComponent(targetPath) : "");
 
-    // ---- FETCH ORIGINAL CONTENT ----
+    /* ---------- FETCH ORIGINAL CONTENT ---------- */
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        "User-Agent":
-          req.headers["user-agent"] || "Stalliongate-Proxy/1.0",
+        "User-Agent": req.headers["user-agent"] || "Stalliongate-Proxy/1.0",
         Accept: req.headers["accept"] || "*/*",
         "Accept-Language":
           req.headers["accept-language"] || "en-US,en;q=0.9",
@@ -96,15 +95,13 @@ export default async function handler(req, res) {
       return res
         .status(response.status)
         .send(
-          generateErrorPage(
-            `Error loading content (${response.status})`
-          )
+          generateErrorPage(`Error loading content (${response.status})`)
         );
     }
 
     const contentType = response.headers.get("content-type") || "";
 
-    // ---- HTML ----
+    /* ---------- HTML ---------- */
     if (contentType.includes("text/html")) {
       let html = await response.text();
       html = rewriteHtmlUrls(html, originalUrl, proxyBaseUrl);
@@ -112,7 +109,7 @@ export default async function handler(req, res) {
       return res.send(html);
     }
 
-    // ---- CSS ----
+    /* ---------- CSS ---------- */
     if (contentType.includes("text/css")) {
       let css = await response.text();
       css = rewriteCssUrls(css, originalUrl, proxyBaseUrl);
@@ -120,7 +117,7 @@ export default async function handler(req, res) {
       return res.send(css);
     }
 
-    // ---- JS / JSON ----
+    /* ---------- JS / JSON ---------- */
     if (
       contentType.includes("javascript") ||
       contentType.includes("application/json")
@@ -131,7 +128,7 @@ export default async function handler(req, res) {
       return res.send(js);
     }
 
-    // ---- BINARY ----
+    /* ---------- BINARY (images, fonts, pdf, etc.) ---------- */
     const buffer = await response.arrayBuffer();
     res.setHeader("Content-Type", contentType);
     return res.send(Buffer.from(buffer));
@@ -143,9 +140,9 @@ export default async function handler(req, res) {
   }
 }
 
-/* =======================
-   🔄 REWRITE UTILITIES
-   ======================= */
+/* ======================================================
+   🔄 URL REWRITE HELPERS
+   ====================================================== */
 
 function rewriteHtmlUrls(html, originalUrl, proxyUrl) {
   const originalDomain = new URL(originalUrl).origin;
@@ -216,9 +213,9 @@ function rewriteJsUrls(js, originalUrl, proxyUrl) {
   return js;
 }
 
-/* =======================
+/* ======================================================
    🚫 ERROR PAGE
-   ======================= */
+   ====================================================== */
 
 function generateErrorPage(message) {
   return `
