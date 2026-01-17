@@ -1,8 +1,5 @@
-// api/proxy.js
-
 /**
- * ✅ FORCE NODE RUNTIME (VERY IMPORTANT)
- * This MUST be the first executable statement in the file
+ * ✅ FORCE NODE RUNTIME
  */
 export const config = {
   runtime: "nodejs",
@@ -10,7 +7,6 @@ export const config = {
 
 /**
  * 🔐 TEMP TOKEN DATABASE
- * (In production, replace with DB or KV store)
  */
 const TOKEN_DATABASE = {
   MTc2NzAxOTk3NzE2: {
@@ -45,58 +41,42 @@ export default async function handler(req, res) {
     const tokenData = TOKEN_DATABASE[token];
 
     if (!tokenData) {
-      return res
-        .status(403)
-        .send(generateErrorPage("Invalid or expired token"));
+      return res.status(403).send(generateErrorPage("Invalid or expired token"));
     }
 
     if (!tokenData.active) {
-      return res
-        .status(403)
-        .send(generateErrorPage("Access has been revoked"));
+      return res.status(403).send(generateErrorPage("Access has been revoked"));
     }
 
     if (new Date(tokenData.expiresAt) < new Date()) {
-      return res
-        .status(403)
-        .send(generateErrorPage("Token has expired"));
+      return res.status(403).send(generateErrorPage("Token has expired"));
     }
 
-    /* ---------- HOST + PROTOCOL (VERCEL SAFE) ---------- */
-    const host =
-      req.headers["x-forwarded-host"] ||
-      req.headers.host ||
-      "stalliongate-saas.vercel.app";
-
+    /* ---------- HOST + PROTOCOL ---------- */
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
     const protocol = req.headers["x-forwarded-proto"] || "https";
-
     const proxyBaseUrl = `${protocol}://${host}/api/proxy?token=${token}`;
 
     /* ---------- TARGET URL ---------- */
     const originalUrl = tokenData.originalUrl;
     const targetPath = req.url.split("&path=")[1] || "";
-    const targetUrl =
-      originalUrl + (targetPath ? "/" + decodeURIComponent(targetPath) : "");
+    const targetUrl = originalUrl + (targetPath ? "/" + decodeURIComponent(targetPath) : "");
 
-    /* ---------- FETCH ORIGINAL CONTENT ---------- */
+    /* ---------- FETCH ORIGINAL CONTENT (NATIVE FETCH) ---------- */
+    // Note: We are using the built-in fetch here, no 'node-fetch' required.
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
         "User-Agent": req.headers["user-agent"] || "Stalliongate-Proxy/1.0",
         Accept: req.headers["accept"] || "*/*",
-        "Accept-Language":
-          req.headers["accept-language"] || "en-US,en;q=0.9",
+        "Accept-Language": req.headers["accept-language"] || "en-US,en;q=0.9",
         Referer: originalUrl,
       },
       redirect: "follow",
     });
 
     if (!response.ok) {
-      return res
-        .status(response.status)
-        .send(
-          generateErrorPage(`Error loading content (${response.status})`)
-        );
+      return res.status(response.status).send(generateErrorPage(`Error loading content (${response.status})`));
     }
 
     const contentType = response.headers.get("content-type") || "";
@@ -118,143 +98,61 @@ export default async function handler(req, res) {
     }
 
     /* ---------- JS / JSON ---------- */
-    if (
-      contentType.includes("javascript") ||
-      contentType.includes("application/json")
-    ) {
+    if (contentType.includes("javascript") || contentType.includes("application/json")) {
       let js = await response.text();
       js = rewriteJsUrls(js, originalUrl, proxyBaseUrl);
       res.setHeader("Content-Type", contentType);
       return res.send(js);
     }
 
-    /* ---------- BINARY (images, fonts, pdf, etc.) ---------- */
+    /* ---------- BINARY ---------- */
     const buffer = await response.arrayBuffer();
     res.setHeader("Content-Type", contentType);
     return res.send(Buffer.from(buffer));
+
   } catch (error) {
     console.error("Proxy crash:", error);
-    return res
-      .status(500)
-      .send(generateErrorPage("Failed to load content"));
+    return res.status(500).send(generateErrorPage("Failed to load content"));
   }
 }
 
 /* ======================================================
-   🔄 URL REWRITE HELPERS
+    🔄 URL REWRITE HELPERS
    ====================================================== */
 
 function rewriteHtmlUrls(html, originalUrl, proxyUrl) {
   const originalDomain = new URL(originalUrl).origin;
+  const escapedDomain = originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  html = html.replace(
-    new RegExp(
-      originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      "g"
-    ),
-    proxyUrl
-  );
-
-  html = html.replace(
-    new RegExp(`//${new URL(originalUrl).host}`, "g"),
-    proxyUrl
-  );
-
-  html = html.replace(
-    /href=["']\/([^"']*?)["']/g,
-    `href="${proxyUrl}&path=$1"`
-  );
-
-  html = html.replace(
-    /src=["']\/([^"']*?)["']/g,
-    `src="${proxyUrl}&path=$1"`
-  );
-
-  html = html.replace(
-    /action=["']\/([^"']*?)["']/g,
-    `action="${proxyUrl}&path=$1"`
-  );
-
-  html = html.replace(
-    /url\(["']?\/([^"')]*?)["']?\)/g,
-    `url("${proxyUrl}&path=$1")`
-  );
+  html = html.replace(new RegExp(escapedDomain, "g"), proxyUrl);
+  html = html.replace(new RegExp(`//${new URL(originalUrl).host}`, "g"), proxyUrl);
+  html = html.replace(/href=["']\/([^"']*?)["']/g, `href="${proxyUrl}&path=$1"`);
+  html = html.replace(/src=["']\/([^"']*?)["']/g, `src="${proxyUrl}&path=$1"`);
+  html = html.replace(/action=["']\/([^"']*?)["']/g, `action="${proxyUrl}&path=$1"`);
+  html = html.replace(/url\(["']?\/([^")]*?)["']?\)/g, `url("${proxyUrl}&path=$1")`);
 
   return html;
 }
 
 function rewriteCssUrls(css, originalUrl, proxyUrl) {
   const originalDomain = new URL(originalUrl).origin;
+  const escapedDomain = originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  css = css.replace(
-    new RegExp(
-      originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      "g"
-    ),
-    proxyUrl
-  );
-
-  css = css.replace(
-    /url\(["']?\/([^"')]*?)["']?\)/g,
-    `url("${proxyUrl}&path=$1")`
-  );
+  css = css.replace(new RegExp(escapedDomain, "g"), proxyUrl);
+  css = css.replace(/url\(["']?\/([^")]*?)["']?\)/g, `url("${proxyUrl}&path=$1")`);
 
   return css;
 }
 
 function rewriteJsUrls(js, originalUrl, proxyUrl) {
   const originalDomain = new URL(originalUrl).origin;
-
-  js = js.replace(
-    new RegExp(`["']${originalDomain}`, "g"),
-    `"${proxyUrl}`
-  );
-
-  return js;
+  return js.replace(new RegExp(`["']${originalDomain}`, "g"), `"${proxyUrl}`);
 }
 
 /* ======================================================
-   🚫 ERROR PAGE
+    🚫 ERROR PAGE
    ====================================================== */
 
 function generateErrorPage(message) {
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Stalliongate - Access Error</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg,#667eea,#764ba2);
-    }
-    .container {
-      background: white;
-      padding: 50px;
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(0,0,0,.3);
-      text-align: center;
-      max-width: 600px;
-    }
-    h1 { color: #e74c3c; margin-bottom: 20px; }
-    p { color: #555; line-height: 1.8; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div style="font-size:72px">🚫</div>
-    <h1>Access Denied</h1>
-    <p>${message}</p>
-    <p style="margin-top:30px;color:#999;font-size:14px">
-      Powered by Stalliongate SaaS
-    </p>
-  </div>
-</body>
-</html>
-`;
+  return `<!DOCTYPE html><html><head><title>Stalliongate - Access Error</title><style>body { font-family: 'Segoe UI', Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: linear-gradient(135deg,#667eea,#764ba2); } .container { background: white; padding: 50px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center; max-width: 600px; } h1 { color: #e74c3c; margin-bottom: 20px; } p { color: #555; line-height: 1.8; }</style></head><body><div class="container"><div style="font-size:72px">🚫</div><h1>Access Denied</h1><p>${message}</p><p style="margin-top:30px;color:#999;font-size:14px">Powered by Stalliongate SaaS</p></div></body></html>`;
 }
